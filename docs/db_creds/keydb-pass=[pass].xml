@@ -1,0 +1,23 @@
+#DataSourceSettings#
+        #LocalDataSource: keydb-local
+        #BEGIN#
+<data-source source="LOCAL" name="keydb-local" uuid="1ae75b89-1e5a-42c6-9474-1b3cc381c60d">
+    <database-info product="Redis Standalone" version="6.3.4" jdbc-version="4.2" driver-name="Redis JDBC Driver"
+                   driver-version="1.5" dbms="REDIS" exact-version="6.3.4" exact-driver-version="1.5">
+        <jdbc-catalog-is-schema>true</jdbc-catalog-is-schema>
+    </database-info>
+    <case-sensitivity plain-identifiers="mixed" quoted-identifiers="mixed"/>
+    <driver-ref>redis</driver-ref>
+    <synchronize>true</synchronize>
+    <jdbc-driver>jdbc.RedisDriver</jdbc-driver>
+    <jdbc-url>jdbc:redis://localhost:6672/0</jdbc-url>
+    <secret-storage>master_key</secret-storage>
+    <schema-mapping>
+        <introspection-scope>
+            <node kind="schema" qname="@"/>
+        </introspection-scope>
+    </schema-mapping>
+    <working-dir>$ProjectFileDir$</working-dir>
+</data-source>
+        #END#
+

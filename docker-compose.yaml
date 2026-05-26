@@ -1,0 +1,60 @@
+services:
+    keydb_ha_test:
+        image: eqalpha/keydb:x86_64_v6.3.4
+        container_name: keydb_ha_test
+        ports:
+            - "${KEYDB_EXTERNAL_PORT}:6379"
+        environment:
+            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
+        volumes:
+            - ./data:/data
+        command: >
+            keydb-server
+            --bind 0.0.0.0
+            --requirepass ${KEYDB_PASSWORD}
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} -p 6379 PING | grep -q PONG"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
+
+    valkey_ha_test:
+        image: valkey/valkey:9
+        container_name: valkey_ha_test
+        ports:
+            - "${VALKEY_EXTERNAL_PORT:-6680}:6379"
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        volumes:
+            - ./valkey-data:/data
+        command: >
+            valkey-server
+            --bind 0.0.0.0
+            --requirepass ${VALKEY_PASSWORD}
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} -p 6379 PING | grep -q PONG"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
+
+    redis_ha_test:
+        container_name: redis_ha_test
+        image: redis:8
+        ports:
+            - "${REDIS_EXTERNAL_PORT:-6681}:6379"
+        environment:
+            - REDIS_PASSWORD=${REDIS_PASSWORD}
+        volumes:
+            - ./redis-data:/data
+        command: >
+            redis-server
+            --bind 0.0.0.0
+            --requirepass ${REDIS_PASSWORD}
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} -p 6379 PING | grep -q PONG"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
