@@ -1,13 +1,10 @@
 services:
     # ====================================================================
-    # KEYDB ACTIVE-REPLICA (Multi-Master) + Sentinel
+    # KEYDB ACTIVE-REPLICA (Multi-Master)
     # ====================================================================
-
     keydb_node1:
         image: eqalpha/keydb:x86_64_v6.3.4
         container_name: keydb_node1
-        ports:
-            - "${KEYDB_NODE1_PORT:-6672}:6379"
         environment:
             - KEYDB_PASSWORD=${KEYDB_PASSWORD}
         volumes:
@@ -24,8 +21,15 @@ services:
             --dir /data
         restart: unless-stopped
         networks:
-            db_ha:
-                ipv4_address: 172.25.0.10
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
         healthcheck:
             test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
             interval: 10s
@@ -35,8 +39,6 @@ services:
     keydb_node2:
         image: eqalpha/keydb:x86_64_v6.3.4
         container_name: keydb_node2
-        ports:
-            - "${KEYDB_NODE2_PORT:-6673}:6379"
         environment:
             - KEYDB_PASSWORD=${KEYDB_PASSWORD}
         volumes:
@@ -53,76 +55,187 @@ services:
             --dir /data
         restart: unless-stopped
         networks:
-            db_ha:
-                ipv4_address: 172.25.0.11
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
         healthcheck:
             test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    keydb_sentinel:
-        image: eqalpha/keydb:x86_64_v6.3.4
-        container_name: keydb_sentinel
+    haproxy:
+        image: haproxy:2.8-alpine
+        container_name: haproxy
         ports:
-            - "${KEYDB_SENTINEL_PORT:-26379}:26379"
+            - "${KEYDB_EXTERNAL_PORT:-6672}:6379"
+            - "${HAPROXY_STATS_PORT:-8404}:8404"
+        volumes:
+            - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
         environment:
             - KEYDB_PASSWORD=${KEYDB_PASSWORD}
-        volumes:
-            - ./sentinel-data:/data
-        entrypoint: ["/bin/sh", "-c"]
-        command:
-            - |
-                echo "Waiting for KeyDB nodes to be available..."
-                until getent hosts keydb_node1 > /dev/null && getent hosts keydb_node2 > /dev/null; do
-                  echo "DNS not ready, waiting 2 seconds..."
-                  sleep 2
-                done
-                
-                # Получаем IP адреса
-                NODE1_IP=$$(getent hosts keydb_node1 | awk '{ print $$1 }')
-                NODE2_IP=$$(getent hosts keydb_node2 | awk '{ print $$1 }')
-                echo "Resolved IPs: node1=$$NODE1_IP, node2=$$NODE2_IP"
-                
-                echo "Generating sentinel config with IPs..."
-                cat <<EOF > /data/sentinel.conf
-                port 26379
-                dir /data
-                
-                sentinel monitor keydb_cluster $$NODE1_IP 6379 1
-                sentinel auth-pass keydb_cluster $${KEYDB_PASSWORD}
-                sentinel down-after-milliseconds keydb_cluster 5000
-                sentinel failover-timeout keydb_cluster 60000
-                sentinel parallel-syncs keydb_cluster 1
-                
-                sentinel monitor keydb_node2 $$NODE2_IP 6379 1
-                sentinel auth-pass keydb_node2 $${KEYDB_PASSWORD}
-                sentinel down-after-milliseconds keydb_node2 5000
-                sentinel failover-timeout keydb_node2 60000
-                sentinel parallel-syncs keydb_node2 1
-                
-                sentinel deny-scripts-reconfig yes
-                EOF
-                
-                echo "Starting KeyDB Sentinel..."
-                exec keydb-sentinel /data/sentinel.conf
-        restart: unless-stopped
-        networks:
-            - db_ha
         depends_on:
             keydb_node1:
                 condition: service_healthy
             keydb_node2:
                 condition: service_healthy
+        restart: unless-stopped
+        networks:
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+
+    # ====================================================================
+    # VALKEY PRIMARY + REPLICA + SENTINEL (Active-Passive)
+    # ====================================================================
+    valkey_primary:
+        image: valkey/valkey:8
+        container_name: valkey_primary
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        volumes:
+            - ./valkey-primary-data:/data
+        command: >
+            valkey-server
+            --bind 0.0.0.0
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
+            --port 6379
+            --dir /data
+        restart: unless-stopped
+        networks:
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
         healthcheck:
-            test: ["CMD-SHELL", "keydb-cli -p 26379 ping | grep -q PONG"]
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
+    valkey_replica:
+        image: valkey/valkey:8
+        container_name: valkey_replica
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        volumes:
+            - ./valkey-replica-data:/data
+        command: >
+            valkey-server
+            --bind 0.0.0.0
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
+            --port 6379
+            --replicaof valkey_primary 6379
+            --replica-read-only yes
+            --dir /data
+        restart: unless-stopped
+        networks:
+            - db_ha
+        depends_on:
+            valkey_primary:
+                condition: service_healthy
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
+        healthcheck:
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} INFO replication | grep master_link_status | grep -q up"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
+
+    valkey_sentinel:
+        image: valkey/valkey:8
+        container_name: valkey_sentinel
+        ports:
+            - "${VALKEY_SENTINEL_PORT:-26380}:26379"
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        volumes:
+            - ./valkey-sentinel-data:/data
+        entrypoint: ["/bin/sh", "-c"]
+        command:
+            - |
+                echo "Waiting for Valkey nodes to be available..."
+                until getent hosts valkey_primary > /dev/null && getent hosts valkey_replica > /dev/null; do
+                  echo "DNS not ready, waiting 2 seconds..."
+                  sleep 2
+                done
+                
+                PRIMARY_IP=$$(getent hosts valkey_primary | awk '{ print $$1 }')
+                echo "Resolved Primary IP: $$PRIMARY_IP"
+                
+                cat <<EOF > /data/sentinel.conf
+                port 26379
+                dir /data
+                sentinel monitor valkey_cluster $$PRIMARY_IP 6379 1
+                sentinel auth-pass valkey_cluster $${VALKEY_PASSWORD}
+                sentinel down-after-milliseconds valkey_cluster 5000
+                sentinel failover-timeout valkey_cluster 60000
+                sentinel parallel-syncs valkey_cluster 1
+                sentinel deny-scripts-reconfig yes
+                EOF
+                
+                echo "Starting Valkey Sentinel..."
+                exec valkey-sentinel /data/sentinel.conf
+        restart: unless-stopped
+        networks:
+            - db_ha
+        depends_on:
+            valkey_primary:
+                condition: service_healthy
+            valkey_replica:
+                condition: service_healthy
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+
+    haproxy_valkey:
+        image: haproxy:2.8-alpine
+        container_name: haproxy_valkey
+        ports:
+            - "${VALKEY_EXTERNAL_PORT:-6673}:6379"
+            - "${HAPROXY_VALKEY_STATS_PORT:-8405}:8404"
+        volumes:
+            - ./haproxy_valkey.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        depends_on:
+            valkey_primary:
+                condition: service_healthy
+            valkey_replica:
+                condition: service_healthy
+        restart: unless-stopped
+        networks:
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+
 networks:
     db_ha:
         driver: bridge
-        ipam:
-            config:
-                - subnet: 172.25.0.0/16
