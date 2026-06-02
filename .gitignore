@@ -24,3 +24,5 @@
 /data/*
 /redis-data/*
 /valkey-data/*
+
+*.rdb

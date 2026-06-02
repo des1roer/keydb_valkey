@@ -1,60 +1,128 @@
 services:
-    keydb_ha_test:
+    # ====================================================================
+    # KEYDB ACTIVE-REPLICA (Multi-Master) + Sentinel
+    # ====================================================================
+
+    keydb_node1:
         image: eqalpha/keydb:x86_64_v6.3.4
-        container_name: keydb_ha_test
+        container_name: keydb_node1
         ports:
-            - "${KEYDB_EXTERNAL_PORT}:6379"
+            - "${KEYDB_NODE1_PORT:-6672}:6379"
         environment:
             - KEYDB_PASSWORD=${KEYDB_PASSWORD}
         volumes:
-            - ./data:/data
+            - ./keydb-node1-data:/data
         command: >
             keydb-server
             --bind 0.0.0.0
             --requirepass ${KEYDB_PASSWORD}
+            --port 6379
+            --masterauth ${KEYDB_PASSWORD}
+            --active-replica yes
+            --multi-master yes
+            --replicaof keydb_node2 6379
+            --dir /data
         restart: unless-stopped
+        networks:
+            db_ha:
+                ipv4_address: 172.25.0.10
         healthcheck:
-            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} -p 6379 PING | grep -q PONG"]
+            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    valkey_ha_test:
-        image: valkey/valkey:9
-        container_name: valkey_ha_test
+    keydb_node2:
+        image: eqalpha/keydb:x86_64_v6.3.4
+        container_name: keydb_node2
         ports:
-            - "${VALKEY_EXTERNAL_PORT:-6680}:6379"
+            - "${KEYDB_NODE2_PORT:-6673}:6379"
         environment:
-            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
         volumes:
-            - ./valkey-data:/data
+            - ./keydb-node2-data:/data
         command: >
-            valkey-server
+            keydb-server
             --bind 0.0.0.0
-            --requirepass ${VALKEY_PASSWORD}
+            --requirepass ${KEYDB_PASSWORD}
+            --port 6379
+            --masterauth ${KEYDB_PASSWORD}
+            --active-replica yes
+            --multi-master yes
+            --replicaof keydb_node1 6379
+            --dir /data
         restart: unless-stopped
+        networks:
+            db_ha:
+                ipv4_address: 172.25.0.11
         healthcheck:
-            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} -p 6379 PING | grep -q PONG"]
+            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    redis_ha_test:
-        container_name: redis_ha_test
-        image: redis:8
+    keydb_sentinel:
+        image: eqalpha/keydb:x86_64_v6.3.4
+        container_name: keydb_sentinel
         ports:
-            - "${REDIS_EXTERNAL_PORT:-6681}:6379"
+            - "${KEYDB_SENTINEL_PORT:-26379}:26379"
         environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD}
+            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
         volumes:
-            - ./redis-data:/data
-        command: >
-            redis-server
-            --bind 0.0.0.0
-            --requirepass ${REDIS_PASSWORD}
+            - ./sentinel-data:/data
+        entrypoint: ["/bin/sh", "-c"]
+        command:
+            - |
+                echo "Waiting for KeyDB nodes to be available..."
+                until getent hosts keydb_node1 > /dev/null && getent hosts keydb_node2 > /dev/null; do
+                  echo "DNS not ready, waiting 2 seconds..."
+                  sleep 2
+                done
+                
+                # Получаем IP адреса
+                NODE1_IP=$$(getent hosts keydb_node1 | awk '{ print $$1 }')
+                NODE2_IP=$$(getent hosts keydb_node2 | awk '{ print $$1 }')
+                echo "Resolved IPs: node1=$$NODE1_IP, node2=$$NODE2_IP"
+                
+                echo "Generating sentinel config with IPs..."
+                cat <<EOF > /data/sentinel.conf
+                port 26379
+                dir /data
+                
+                sentinel monitor keydb_cluster $$NODE1_IP 6379 1
+                sentinel auth-pass keydb_cluster $${KEYDB_PASSWORD}
+                sentinel down-after-milliseconds keydb_cluster 5000
+                sentinel failover-timeout keydb_cluster 60000
+                sentinel parallel-syncs keydb_cluster 1
+                
+                sentinel monitor keydb_node2 $$NODE2_IP 6379 1
+                sentinel auth-pass keydb_node2 $${KEYDB_PASSWORD}
+                sentinel down-after-milliseconds keydb_node2 5000
+                sentinel failover-timeout keydb_node2 60000
+                sentinel parallel-syncs keydb_node2 1
+                
+                sentinel deny-scripts-reconfig yes
+                EOF
+                
+                echo "Starting KeyDB Sentinel..."
+                exec keydb-sentinel /data/sentinel.conf
         restart: unless-stopped
+        networks:
+            - db_ha
+        depends_on:
+            keydb_node1:
+                condition: service_healthy
+            keydb_node2:
+                condition: service_healthy
         healthcheck:
-            test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} -p 6379 PING | grep -q PONG"]
+            test: ["CMD-SHELL", "keydb-cli -p 26379 ping | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
+
+networks:
+    db_ha:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: 172.25.0.0/16
