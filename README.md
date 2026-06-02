@@ -17,7 +17,7 @@ Summary:
 
 ```bash
 docker run --rm --network $(docker network ls -q -f name=db_ha) \
-    valkey/valkey:8 \
+    valkey/valkey:9 \
     valkey-benchmark -h haproxy_valkey -p 6379 -a pass -t set -n 100000 -c 50 -d 256
 ```
 

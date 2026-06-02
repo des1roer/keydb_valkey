@@ -98,7 +98,7 @@ services:
     # VALKEY PRIMARY + REPLICA + SENTINEL (Active-Passive)
     # ====================================================================
     valkey_primary:
-        image: valkey/valkey:8
+        image: valkey/valkey:9
         container_name: valkey_primary
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
@@ -129,7 +129,7 @@ services:
             retries: 10
 
     valkey_replica:
-        image: valkey/valkey:8
+        image: valkey/valkey:9
         container_name: valkey_replica
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
@@ -165,7 +165,7 @@ services:
             retries: 10
 
     valkey_sentinel:
-        image: valkey/valkey:8
+        image: valkey/valkey:9
         container_name: valkey_sentinel
         ports:
             - "${VALKEY_SENTINEL_PORT:-26380}:26379"
