@@ -378,6 +378,25 @@ services:
                     cpus: '0.5'
                     memory: 256M
 
+    # ====================================================================
+    # MIGRATION PROXY — unified entry point, switch between KeyDB ↔ Valkey
+    # ====================================================================
+    haproxy_migrate:
+        image: haproxy:2.8-alpine
+        container_name: haproxy_migrate
+        ports:
+            - "${MIGRATE_EXTERNAL_PORT:-6690}:6379"
+            - "${MIGRATE_STATS_PORT:-8407}:8404"
+        volumes:
+            - ./haproxy_migrate.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+        networks:
+            - db_ha
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+
 networks:
     db_ha:
         driver: bridge
