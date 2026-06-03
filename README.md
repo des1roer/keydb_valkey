@@ -102,3 +102,42 @@ Summary:
           avg       min       p50       p95       p99       max
         8.389     0.112     1.583    76.479    78.719   192.639
 ```
+
+make migrate-data
+
+```
+=== 1. KeyDB: DBSIZE до миграции ===
+4
+
+=== 2. KeyDB: BGSAVE (сохраняем дамп) ===
+Background saving started
+  Ждём завершения dump...
+
+=== 3. Копируем dump.rdb на хост ===
+Successfully copied 2.56kB to /home/des/proj/keydb_valkey/dump.rdb
+  dump.rdb скопирован, размер: 668
+
+=== 4. Останавливаем valkey_primary ===
+valkey_primary
+  valkey_primary остановлен
+
+=== 5. Копируем dump.rdb в valkey_primary ===
+Successfully copied 2.56kB to valkey_primary:/data/dump.rdb
+  dump.rdb размещён в контейнере
+
+=== 6. Запускаем valkey_primary (автозагрузка dump.rdb) ===
+valkey_primary
+  valkey_primary запущен
+  Ждём загрузки данных...
+
+=== 7. Проверка результата ===
+  KeyDB  DBSIZE: 4
+  Valkey DBSIZE: 4
+
+=== 8. Очистка ===
+  ./dump.rdb удалён
+
+✅ Миграция завершена. Дальше:
+   make migrate-to-valkey   # переключить трафик на Valkey
+   make migrate-to-keydb    # вернуть обратно на KeyDB
+```
