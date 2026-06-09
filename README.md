@@ -43,6 +43,20 @@ Summary:
         0.832     0.200     0.719     1.335     1.911    40.031
 ```
 
+```bash 
+docker run --rm --network $(docker network ls -q -f name=valkey_cluster) \
+    valkey/valkey:9 \
+    valkey-benchmark -h valkey_node1 -p 6379 -a pass -t set -n 100000 -c 50 -d 256 --cluster
+```
+
+```
+Summary:
+  throughput summary: 99800.40 requests per second
+  latency summary (msec):
+          avg       min       p50       p95       p99       max
+        0.422     0.104     0.407     0.631     0.799    14.111
+```
+
 ```bash
 docker run --rm --network $(docker network ls -q -f name=db_ha) \
     redis:7.4-alpine \

@@ -22,84 +22,42 @@ kdb1:
 kdb2:
 	@$(DOCKER_COMP) exec keydb_node2 bash
 
-# ── VALKEY ──
-val-primary:
-	@$(DOCKER_COMP) exec valkey_primary bash
-val-replica:
-	@$(DOCKER_COMP) exec valkey_replica bash
-val-sentinel:
-	@$(DOCKER_COMP) exec valkey_sentinel bash
+# ── VALKEY CLUSTER (6 nodes: 3 primary + 3 replica) ──
+val-node1:
+	@$(DOCKER_COMP) exec valkey_node1 bash
+val-node2:
+	@$(DOCKER_COMP) exec valkey_node2 bash
+val-node3:
+	@$(DOCKER_COMP) exec valkey_node3 bash
+val-node4:
+	@$(DOCKER_COMP) exec valkey_node4 bash
+val-node5:
+	@$(DOCKER_COMP) exec valkey_node5 bash
+val-node6:
+	@$(DOCKER_COMP) exec valkey_node6 bash
 
-# ── REDIS ──
-redis-primary:
-	@$(DOCKER_COMP) exec redis_primary bash
-redis-replica:
-	@$(DOCKER_COMP) exec redis_replica bash
-redis-sentinel:
-	@$(DOCKER_COMP) exec redis_sentinel bash
+# Создать кластер (запустить после make up)
+val-cluster-create:
+	@bash bin/create-cluster.sh
 
-# ── MIGRATION PROXY ──
-migrate-status:
-	@echo "=== Current backend routing ==="
-	@echo "show stat" | nc -q1 -w1 localhost 9999 2>/dev/null || \
-		docker exec haproxy_migrate sh -c 'echo "show stat" | socat - /var/run/haproxy.sock' || \
-		echo "haproxy_migrate not running. Start with: make up"
+# Информация о кластере
+val-cluster-info:
+	@echo "=== Cluster Info ==="
+	@docker exec valkey_node1 valkey-cli -a pass -c CLUSTER INFO 2>/dev/null | grep -v Warning
+	@echo ""
+	@echo "=== Cluster Nodes ==="
+	@docker exec valkey_node1 valkey-cli -a pass -c CLUSTER NODES 2>/dev/null | grep -v Warning
 
-# Switch to KeyDB (default)
-migrate-to-keydb:
-	@echo "Switching to KeyDB backend..."
-	@docker exec haproxy_migrate sh -c 'echo "set default-server valkey_backend state maint" | socat - /var/run/haproxy.sock' 2>/dev/null || true
-	@docker exec haproxy_migrate sh -c 'echo "set server keydb_backend/node1 state ready" | socat - /var/run/haproxy.sock' 2>/dev/null || true
-	@docker exec haproxy_migrate sh -c 'echo "set server keydb_backend/node2 state ready" | socat - /var/run/haproxy.sock' 2>/dev/null || true
-	@echo "Routing: KeyDB Multi-Master"
+# Проверка кластера
+val-cluster-check:
+	@docker run --rm --network keydb_valkey_valkey_cluster \
+		valkey/valkey:9 \
+		valkey-cli --cluster check valkey_node1:6379 -a pass
 
-# Switch to Valkey
-migrate-to-valkey:
-	@echo "Switching to Valkey backend..."
-	@docker exec haproxy_migrate sh -c 'echo "set default-server keydb_backend state maint" | socat - /var/run/haproxy.sock' 2>/dev/null || true
-	@docker exec haproxy_migrate sh -c 'echo "set server valkey_backend/primary state ready" | socat - /var/run/haproxy.sock' 2>/dev/null || true
-	@echo "Routing: Valkey (primary→replica)"
+# Подключение к кластеру (cluster-мод)
+val-shell:
+	@docker exec -it valkey_node1 valkey-cli -a pass -c
 
-# ── DATA MIGRATION ──
-# KeyDB → Valkey: stop Valkey, replace dump.rdb, restart (auto-load)
-migrate-data:
-	@echo "=== 1. KeyDB: DBSIZE до миграции ==="
-	@docker exec keydb_node1 keydb-cli -a pass DBSIZE 2>&1 | grep -v Warning
-	@echo ""
-	@echo "=== 2. KeyDB: BGSAVE (сохраняем дамп) ==="
-	@docker exec keydb_node1 keydb-cli -a pass BGSAVE 2>&1 | grep -v Warning
-	@echo "  Ждём завершения dump..."
-	@sleep 3
-	@echo ""
-	@echo "=== 3. Копируем dump.rdb на хост ==="
-	@docker cp keydb_node1:/data/dump.rdb ./dump.rdb 2>&1 && \
-		echo "  dump.rdb скопирован, размер: $$(ls -lh ./dump.rdb | awk '{print $$5}')" || \
-		(echo "  ОШИБКА: не удалось скопировать dump.rdb"; exit 1)
-	@echo ""
-	@echo "=== 4. Останавливаем valkey_primary ==="
-	@docker stop valkey_primary 2>&1 && \
-		echo "  valkey_primary остановлен" || \
-		(echo "  ОШИБКА: не удалось остановить valkey_primary"; exit 1)
-	@echo ""
-	@echo "=== 5. Копируем dump.rdb в valkey_primary ==="
-	@docker cp ./dump.rdb valkey_primary:/data/dump.rdb 2>&1 && \
-		echo "  dump.rdb размещён в контейнере" || \
-		(echo "  ОШИБКА: не удалось разместить dump.rdb"; exit 1)
-	@echo ""
-	@echo "=== 6. Запускаем valkey_primary (автозагрузка dump.rdb) ==="
-	@docker start valkey_primary 2>&1 && \
-		echo "  valkey_primary запущен" || \
-		(echo "  ОШИБКА: не удалось запустить valkey_primary"; exit 1)
-	@echo "  Ждём загрузки данных..."
-	@sleep 3
-	@echo ""
-	@echo "=== 7. Проверка результата ==="
-	@echo "  KeyDB  DBSIZE: $$(docker exec keydb_node1 keydb-cli -a pass DBSIZE 2>&1 | grep -v Warning)"
-	@echo "  Valkey DBSIZE: $$(docker exec valkey_primary valkey-cli -a pass DBSIZE 2>&1 | grep -v Warning)"
-	@echo ""
-	@echo "=== 8. Очистка ==="
-	@rm -f ./dump.rdb && echo "  ./dump.rdb удалён"
-	@echo ""
-	@echo "✅ Миграция завершена. Дальше:"
-	@echo "   make migrate-to-valkey   # переключить трафик на Valkey"
-	@echo "   make migrate-to-keydb    # вернуть обратно на KeyDB"
+# ── PHP TEST ──
+php-test:
+	@$(DOCKER_COMP) run --rm php-test

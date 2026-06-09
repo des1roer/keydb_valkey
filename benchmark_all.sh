@@ -7,41 +7,30 @@ CONCURRENCY=50
 DATA_SIZE=256
 
 echo "=========================================="
-echo "Unified Benchmark Suite (valkey-benchmark)"
+echo "Valkey Cluster Benchmark"
 echo "Requests: ${REQUESTS}"
 echo "Concurrency: ${CONCURRENCY}"
 echo "Data Size: ${DATA_SIZE} bytes"
 echo "=========================================="
 echo ""
 
-# Функция для запуска бенчмарка
-run_benchmark() {
-    local name=$1
-    local host=$2
+NETWORK="keydb_valkey_valkey_cluster"
 
-    echo "📊 Testing: ${name} (${host})"
-    echo "------------------------------------------"
+# Бенчмарк кластера — все primary-ноды одновременно (-C = cluster mode)
+echo "========== Cluster (3 primary nodes) =========="
+echo "------------------------------------------"
 
-    docker run --rm --network $(docker network ls -q -f name=db_ha) \
-        valkey/valkey:8 \
-        valkey-benchmark \
-        -h ${host} \
-        -p 6379 \
-        -a ${PASSWORD} \
-        -t set \
-        -n ${REQUESTS} \
-        -c ${CONCURRENCY} \
-        -d ${DATA_SIZE} \
+docker run --rm --network "$NETWORK" \
+    valkey/valkey:9 \
+    valkey-benchmark \
+    -C valkey_node1:6379 valkey_node2:6379 valkey_node3:6379 \
+    -a "$PASSWORD" \
+    -t set \
+    -n "$REQUESTS" \
+    -c "$CONCURRENCY" \
+    -d "$DATA_SIZE" \
 
-    echo ""
-}
-
-# Тест всех систем
-echo "========== SET Operations =========="
-run_benchmark "KeyDB (Active-Active)" "haproxy"
-run_benchmark "Valkey (Master-Replica)" "haproxy_valkey"
-run_benchmark "Redis (Master-Replica)" "haproxy_redis"
-
+echo ""
 echo "=========================================="
-echo "✅ All benchmarks completed!"
+echo "All benchmarks completed!"
 echo "=========================================="

@@ -1,119 +1,33 @@
 services:
     # ====================================================================
-    # KEYDB ACTIVE-REPLICA (Multi-Master)
+    # VALKEY CLUSTER — 3 primary + 3 replica
+    # Документация: https://valkey.io/topics/cluster-tutorial/
+    # Каждая нода: client port + cluster bus port (+10000)
     # ====================================================================
-    keydb_node1:
-        image: eqalpha/keydb:x86_64_v6.3.4
-        container_name: keydb_node1
-        environment:
-            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
-        volumes:
-            - ./keydb-node1-data:/data
-        command: >
-            keydb-server
-            --bind 0.0.0.0
-            --requirepass ${KEYDB_PASSWORD}
-            --port 6379
-            --masterauth ${KEYDB_PASSWORD}
-            --active-replica yes
-            --multi-master yes
-            --replicaof keydb_node2 6379
-            --dir /data
-        restart: unless-stopped
-        networks:
-            - db_ha
-        deploy:
-            resources:
-                limits:
-                    cpus: '1.0'
-                    memory: 1G
-                reservations:
-                    cpus: '0.5'
-                    memory: 512M
-        healthcheck:
-            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
-            interval: 10s
-            timeout: 3s
-            retries: 10
-
-    keydb_node2:
-        image: eqalpha/keydb:x86_64_v6.3.4
-        container_name: keydb_node2
-        environment:
-            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
-        volumes:
-            - ./keydb-node2-data:/data
-        command: >
-            keydb-server
-            --bind 0.0.0.0
-            --requirepass ${KEYDB_PASSWORD}
-            --port 6379
-            --masterauth ${KEYDB_PASSWORD}
-            --active-replica yes
-            --multi-master yes
-            --replicaof keydb_node1 6379
-            --dir /data
-        restart: unless-stopped
-        networks:
-            - db_ha
-        deploy:
-            resources:
-                limits:
-                    cpus: '1.0'
-                    memory: 1G
-                reservations:
-                    cpus: '0.5'
-                    memory: 512M
-        healthcheck:
-            test: ["CMD-SHELL", "keydb-cli -a $${KEYDB_PASSWORD} PING | grep -q PONG"]
-            interval: 10s
-            timeout: 3s
-            retries: 10
-
-    haproxy:
-        image: haproxy:2.8-alpine
-        container_name: haproxy
-        ports:
-            - "${KEYDB_EXTERNAL_PORT:-6672}:6379"
-            - "${HAPROXY_STATS_PORT:-8404}:8404"
-        volumes:
-            - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-        environment:
-            - KEYDB_PASSWORD=${KEYDB_PASSWORD}
-        depends_on:
-            keydb_node1:
-                condition: service_healthy
-            keydb_node2:
-                condition: service_healthy
-        restart: unless-stopped
-        networks:
-            - db_ha
-        deploy:
-            resources:
-                limits:
-                    cpus: '0.5'
-                    memory: 256M
-
-    # ====================================================================
-    # VALKEY PRIMARY + REPLICA + SENTINEL (Active-Passive)
-    # ====================================================================
-    valkey_primary:
+    valkey_node1:
         image: valkey/valkey:9
-        container_name: valkey_primary
+        container_name: valkey_node1
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
         volumes:
-            - ./valkey-primary-data:/data
+            - ./valkey-node1-data:/data
         command: >
             valkey-server
             --bind 0.0.0.0
             --requirepass ${VALKEY_PASSWORD}
             --masterauth ${VALKEY_PASSWORD}
             --port 6379
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
             --dir /data
-        restart: unless-stopped
+        ports:
+            - "${VALKEY_NODE1_PORT:-7001}:6379"
+            - "${VALKEY_NODE1_BUS_PORT:-17001}:16379"
         networks:
-            - db_ha
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
@@ -128,28 +42,30 @@ services:
             timeout: 3s
             retries: 10
 
-    valkey_replica:
+    valkey_node2:
         image: valkey/valkey:9
-        container_name: valkey_replica
+        container_name: valkey_node2
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
         volumes:
-            - ./valkey-replica-data:/data
+            - ./valkey-node2-data:/data
         command: >
             valkey-server
             --bind 0.0.0.0
             --requirepass ${VALKEY_PASSWORD}
             --masterauth ${VALKEY_PASSWORD}
             --port 6379
-            --replicaof valkey_primary 6379
-            --replica-read-only yes
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
             --dir /data
-        restart: unless-stopped
+        ports:
+            - "${VALKEY_NODE2_PORT:-7002}:6379"
+            - "${VALKEY_NODE2_BUS_PORT:-17002}:16379"
         networks:
-            - db_ha
-        depends_on:
-            valkey_primary:
-                condition: service_healthy
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
@@ -159,103 +75,35 @@ services:
                     cpus: '0.5'
                     memory: 512M
         healthcheck:
-            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} INFO replication | grep master_link_status | grep -q up"]
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    valkey_sentinel:
+    valkey_node3:
         image: valkey/valkey:9
-        container_name: valkey_sentinel
-        ports:
-            - "${VALKEY_SENTINEL_PORT:-26380}:26379"
+        container_name: valkey_node3
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
         volumes:
-            - ./valkey-sentinel-data:/data
-        entrypoint: ["/bin/sh", "-c"]
-        command:
-            - |
-                echo "Waiting for Valkey nodes to be available..."
-                until getent hosts valkey_primary > /dev/null && getent hosts valkey_replica > /dev/null; do
-                  echo "DNS not ready, waiting 2 seconds..."
-                  sleep 2
-                done
-                
-                PRIMARY_IP=$$(getent hosts valkey_primary | awk '{ print $$1 }')
-                echo "Resolved Primary IP: $$PRIMARY_IP"
-                
-                cat <<EOF > /data/sentinel.conf
-                port 26379
-                dir /data
-                sentinel monitor valkey_cluster $$PRIMARY_IP 6379 1
-                sentinel auth-pass valkey_cluster $${VALKEY_PASSWORD}
-                sentinel down-after-milliseconds valkey_cluster 5000
-                sentinel failover-timeout valkey_cluster 60000
-                sentinel parallel-syncs valkey_cluster 1
-                sentinel deny-scripts-reconfig yes
-                EOF
-                
-                echo "Starting Valkey Sentinel..."
-                exec valkey-sentinel /data/sentinel.conf
-        restart: unless-stopped
-        networks:
-            - db_ha
-        depends_on:
-            valkey_primary:
-                condition: service_healthy
-            valkey_replica:
-                condition: service_healthy
-        deploy:
-            resources:
-                limits:
-                    cpus: '0.5'
-                    memory: 256M
-
-    haproxy_valkey:
-        image: haproxy:2.8-alpine
-        container_name: haproxy_valkey
-        ports:
-            - "${VALKEY_EXTERNAL_PORT:-6673}:6379"
-            - "${HAPROXY_VALKEY_STATS_PORT:-8405}:8404"
-        volumes:
-            - ./haproxy_valkey.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-        environment:
-            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
-        depends_on:
-            valkey_primary:
-                condition: service_healthy
-            valkey_replica:
-                condition: service_healthy
-        restart: unless-stopped
-        networks:
-            - db_ha
-        deploy:
-            resources:
-                limits:
-                    cpus: '0.5'
-                    memory: 256M
-
-    # ====================================================================
-    # REDIS PRIMARY + REPLICA + SENTINEL (Active-Passive)
-    # ====================================================================
-    redis_primary:
-        image: redis:7.4-alpine
-        container_name: redis_primary
-        environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD}
-        volumes:
-            - ./redis-primary-data:/data
+            - ./valkey-node3-data:/data
         command: >
-            redis-server
+            valkey-server
             --bind 0.0.0.0
-            --requirepass ${REDIS_PASSWORD}
-            --masterauth ${REDIS_PASSWORD}
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
             --port 6379
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
             --dir /data
-        restart: unless-stopped
+        ports:
+            - "${VALKEY_NODE3_PORT:-7003}:6379"
+            - "${VALKEY_NODE3_BUS_PORT:-17003}:16379"
         networks:
-            - db_ha
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
@@ -265,33 +113,35 @@ services:
                     cpus: '0.5'
                     memory: 512M
         healthcheck:
-            test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} PING | grep -q PONG"]
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    redis_replica:
-        image: redis:7.4-alpine
-        container_name: redis_replica
+    valkey_node4:
+        image: valkey/valkey:9
+        container_name: valkey_node4
         environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD}
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
         volumes:
-            - ./redis-replica-data:/data
+            - ./valkey-node4-data:/data
         command: >
-            redis-server
+            valkey-server
             --bind 0.0.0.0
-            --requirepass ${REDIS_PASSWORD}
-            --masterauth ${REDIS_PASSWORD}
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
             --port 6379
-            --replicaof redis_primary 6379
-            --replica-read-only yes
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
             --dir /data
-        restart: unless-stopped
+        ports:
+            - "${VALKEY_NODE4_PORT:-7004}:6379"
+            - "${VALKEY_NODE4_BUS_PORT:-17004}:16379"
         networks:
-            - db_ha
-        depends_on:
-            redis_primary:
-                condition: service_healthy
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
@@ -301,96 +151,109 @@ services:
                     cpus: '0.5'
                     memory: 512M
         healthcheck:
-            test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} INFO replication | grep master_link_status | grep -q up"]
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
             interval: 10s
             timeout: 3s
             retries: 10
 
-    redis_sentinel:
-        image: redis:7.4-alpine
-        container_name: redis_sentinel
-        ports:
-            - "${REDIS_SENTINEL_PORT:-26381}:26379"
+    valkey_node5:
+        image: valkey/valkey:9
+        container_name: valkey_node5
         environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD}
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
         volumes:
-            - ./redis-sentinel-data:/data
-        entrypoint: ["/bin/sh", "-c"]
-        command:
-            - |
-                echo "Waiting for Redis nodes to be available..."
-                until getent hosts redis_primary > /dev/null && getent hosts redis_replica > /dev/null; do
-                  echo "DNS not ready, waiting 2 seconds..."
-                  sleep 2
-                done
-                
-                PRIMARY_IP=$$(getent hosts redis_primary | awk '{ print $$1 }')
-                echo "Resolved Primary IP: $$PRIMARY_IP"
-                
-                cat <<EOF > /data/sentinel.conf
-                port 26379
-                dir /data
-                sentinel monitor redis_cluster $$PRIMARY_IP 6379 1
-                sentinel auth-pass redis_cluster $${REDIS_PASSWORD}
-                sentinel down-after-milliseconds redis_cluster 5000
-                sentinel failover-timeout redis_cluster 60000
-                sentinel parallel-syncs redis_cluster 1
-                sentinel deny-scripts-reconfig yes
-                EOF
-                
-                echo "Starting Redis Sentinel..."
-                exec redis-sentinel /data/sentinel.conf
-        restart: unless-stopped
+            - ./valkey-node5-data:/data
+        command: >
+            valkey-server
+            --bind 0.0.0.0
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
+            --port 6379
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
+            --dir /data
+        ports:
+            - "${VALKEY_NODE5_PORT:-7005}:6379"
+            - "${VALKEY_NODE5_BUS_PORT:-17005}:16379"
         networks:
-            - db_ha
-        depends_on:
-            redis_primary:
-                condition: service_healthy
-            redis_replica:
-                condition: service_healthy
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
                     cpus: '0.5'
-                    memory: 256M
+                    memory: 512M
+        healthcheck:
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
 
-    haproxy_redis:
-        image: haproxy:2.8-alpine
-        container_name: haproxy_redis
-        ports:
-            - "${REDIS_EXTERNAL_PORT:-6674}:6379"
-            - "${HAPROXY_REDIS_STATS_PORT:-8406}:8404"
-        volumes:
-            - ./haproxy_redis.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    valkey_node6:
+        image: valkey/valkey:9
+        container_name: valkey_node6
         environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD}
-        depends_on:
-            redis_primary:
-                condition: service_healthy
-            redis_replica:
-                condition: service_healthy
-        restart: unless-stopped
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        volumes:
+            - ./valkey-node6-data:/data
+        command: >
+            valkey-server
+            --bind 0.0.0.0
+            --requirepass ${VALKEY_PASSWORD}
+            --masterauth ${VALKEY_PASSWORD}
+            --port 6379
+            --cluster-enabled yes
+            --cluster-config-file nodes.conf
+            --cluster-node-timeout 5000
+            --appendonly yes
+            --dir /data
+        ports:
+            - "${VALKEY_NODE6_PORT:-7006}:6379"
+            - "${VALKEY_NODE6_BUS_PORT:-17006}:16379"
         networks:
-            - db_ha
+            - valkey_cluster
+        restart: unless-stopped
         deploy:
             resources:
                 limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
                     cpus: '0.5'
-                    memory: 256M
+                    memory: 512M
+        healthcheck:
+            test: ["CMD-SHELL", "valkey-cli -a $${VALKEY_PASSWORD} PING | grep -q PONG"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
 
     # ====================================================================
-    # MIGRATION PROXY — unified entry point, switch between KeyDB ↔ Valkey
+    # PHP 8.5 с phpredis — тест кластера
     # ====================================================================
-    haproxy_migrate:
-        image: haproxy:2.8-alpine
-        container_name: haproxy_migrate
-        ports:
-            - "${MIGRATE_EXTERNAL_PORT:-6690}:6379"
-            - "${MIGRATE_STATS_PORT:-8407}:8404"
+    php-test:
+        build:
+            context: .
+            dockerfile: ./php/Dockerfile
+        container_name: php-test
         volumes:
-            - ./haproxy_migrate.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+            - ./php:/app
+        environment:
+            - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+        depends_on:
+            - valkey_node1
+            - valkey_node2
+            - valkey_node3
+            - valkey_node4
+            - valkey_node5
+            - valkey_node6
         networks:
-            - db_ha
+            - valkey_cluster
+        restart: "no"
         deploy:
             resources:
                 limits:
@@ -398,5 +261,5 @@ services:
                     memory: 256M
 
 networks:
-    db_ha:
+    valkey_cluster:
         driver: bridge
