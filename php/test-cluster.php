@@ -33,8 +33,11 @@ try {
     // FAILOVER_DISTRIBUTE - распределяет чтения по репликам случайным образом
 
     // Проверка
-    $cluster->set('test_key', 'Hello Valkey Cluster!');
+    $cluster->set('test_key', 'Valkey Cluster' . new \DateTimeImmutable()->getTimestamp());
+
     echo $cluster->get('test_key');
+    echo PHP_EOL .' -------- ';
+    echo $cluster->get('ahhaah');
 
 } catch (RedisClusterException $e) {
     echo "Cluster error: " . $e->getMessage();

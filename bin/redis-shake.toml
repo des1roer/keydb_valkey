@@ -1,0 +1,13 @@
+[sync_reader]
+address = "keydb_node1:6379"
+password = "pass"
+sync_rdb = true
+sync_aof = false
+
+[redis_writer]
+cluster = true
+address = "valkey_node1:6379"
+password = "pass"
+
+[advanced]
+rdb_restore_command_behavior = "rewrite"

@@ -14,7 +14,7 @@ done
 
 echo ""
 echo "=== Создание кластера (3 primary + 3 replica) ==="
-docker run --rm --network keydb_valkey_valkey_cluster \
+docker run --rm --network keydb_valkey_db_ha \
     -e VALKEY_PASSWORD=$PASSWORD \
     valkey/valkey:9 \
     valkey-cli --cluster create \

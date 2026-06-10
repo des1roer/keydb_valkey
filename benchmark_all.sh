@@ -14,7 +14,7 @@ echo "Data Size: ${DATA_SIZE} bytes"
 echo "=========================================="
 echo ""
 
-NETWORK="keydb_valkey_valkey_cluster"
+NETWORK="keydb_valkey_db_ha"
 
 # Бенчмарк кластера — все primary-ноды одновременно (-C = cluster mode)
 echo "========== Cluster (3 primary nodes) =========="
