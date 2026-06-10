@@ -20,6 +20,8 @@ services:
             --replicaof keydb_node2 6379
             --dir /data
         restart: unless-stopped
+        ports:
+            - "${KEYDB_NODE1_PORT:-7101}:6379"
         networks:
             - db_ha
         deploy:
@@ -98,7 +100,7 @@ services:
     # VALKEY PRIMARY + REPLICA + SENTINEL (Active-Passive)
     # ====================================================================
     valkey_primary:
-        image: valkey/valkey:9
+        image: valkey/valkey:9.1-alpine
         container_name: valkey_primary
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
@@ -129,7 +131,7 @@ services:
             retries: 10
 
     valkey_replica:
-        image: valkey/valkey:9
+        image: valkey/valkey:9.1-alpine
         container_name: valkey_replica
         environment:
             - VALKEY_PASSWORD=${VALKEY_PASSWORD}
@@ -165,7 +167,7 @@ services:
             retries: 10
 
     valkey_sentinel:
-        image: valkey/valkey:9
+        image: valkey/valkey:9.1-alpine
         container_name: valkey_sentinel
         ports:
             - "${VALKEY_SENTINEL_PORT:-26380}:26379"
@@ -254,6 +256,8 @@ services:
             --port 6379
             --dir /data
         restart: unless-stopped
+        ports:
+            - "${REDIS_PRIMARY_PORT:-7200}:6379"
         networks:
             - db_ha
         deploy:

@@ -18,6 +18,21 @@ Summary:
 ```bash
 docker run --rm --network $(docker network ls -q -f name=db_ha) \
     valkey/valkey:9 \
+    valkey-benchmark -h keydb_node1 -p 6379 -a pass -t set -n 100000 -c 50 -d 256
+```
+
+```
+Summary:
+  throughput summary: 36010.08 requests per second
+  latency summary (msec):
+          avg       min       p50       p95       p99       max
+        1.153     0.296     0.839     1.535    17.599    26.303
+
+```
+
+```bash
+docker run --rm --network $(docker network ls -q -f name=db_ha) \
+    valkey/valkey:9 \
     valkey-benchmark -h haproxy_valkey -p 6379 -a pass -t set -n 100000 -c 50 -d 256
 ```
 
@@ -37,10 +52,10 @@ docker run --rm --network $(docker network ls -q -f name=db_ha) \
 
 ```
 Summary:
-  throughput summary: 41118.42 requests per second
+  throughput summary: 45516.61 requests per second
   latency summary (msec):
           avg       min       p50       p95       p99       max
-        0.832     0.200     0.719     1.335     1.911    40.031
+        0.732     0.176     0.647     1.087     1.567    12.135
 ```
 
 ```bash 
@@ -69,6 +84,20 @@ Summary:
   latency summary (msec):
           avg       min       p50       p95       p99       max
         8.265     0.088     1.583    75.455    77.887    84.095
+```
+
+```bash
+docker run --rm --network $(docker network ls -q -f name=db_ha) \
+    valkey/valkey:9 \
+    valkey-benchmark -h redis_primary -p 6379 -a pass -t set -n 100000 -c 50 -d 256
+```
+
+```
+Summary:
+  throughput summary: 45085.66 requests per second
+  latency summary (msec):
+          avg       min       p50       p95       p99       max
+        0.622     0.144     0.543     1.071     1.359     5.015
 ```
 
 ```bash

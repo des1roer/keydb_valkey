@@ -1,4 +1,4 @@
-DOCKER_COMP = docker-compose
+DOCKER_COMP = docker-compose -f docker-compose-all.yaml
 
 default: up
 
@@ -8,7 +8,7 @@ up:
 d: down
 
 down:
-	@$(DOCKER_COMP) down --remove-orphans
+	docker compose down --remove-orphans
 
 build:
 	@$(DOCKER_COMP) build

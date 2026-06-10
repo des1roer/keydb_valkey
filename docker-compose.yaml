@@ -281,6 +281,8 @@ services:
             --multi-master yes
             --replicaof keydb_node2 6379
             --dir /data
+        ports:
+            - "${KEYDB_NODE1_PORT:-7101}:6379"
         restart: unless-stopped
         networks:
             - db_ha
@@ -315,6 +317,8 @@ services:
             --multi-master yes
             --replicaof keydb_node1 6379
             --dir /data
+        ports:
+            - "${KEYDB_NODE2_PORT:-7102}:6379"
         restart: unless-stopped
         networks:
             - db_ha
