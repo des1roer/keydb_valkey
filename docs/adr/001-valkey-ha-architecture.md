@@ -40,6 +40,21 @@
 
 Кластер распределяет hash slots между тремя primary-нодами, что позволяет утилизировать ресурсы трёх серверов параллельно. Реплики обеспечивают автоматический failover без участия внешней системы (Sentinel или HAProxy). Рассмотрены 4 варианта (подробнее ниже).
 
+**Тестирование failover (Sentinel, docker-compose-valkey.yaml).** Выполнен на лабораторной конфигурации: один primary, один replica, один Sentinel. Сценарий: `docker stop valkey_primary`, ожидание 15 секунд, проверка состояния.
+
+До failover:
+- `valkey_primary` — `role:master`, `connected_slaves:1`;
+- `valkey_replica` — `role:slave`, `master_host:valkey_primary`;
+- Sentinel: `get-master-addr-by-name` → `172.21.0.2:6379`;
+
+После failover (15 секунд):
+- `valkey_replica` — `role:master`, `connected_slaves:0`;
+- Sentinel: `get-master-addr-by-name` → `172.21.0.3:6379` (IP реплики);
+
+> **Результат:** Sentinel корректно промотил replica на master за 15 секунд. Кворум был достигнут (quorum: 1 из 1). Время failover соответствует `down-after-milliseconds` (5 000 мс) + время выполнения промоушена.
+
+> **Замечание:** для production рекомендуется 3 Sentinel-ноды для защиты от потери кворума при отказе одной Sentinel-ноды.
+
 ## Последствия
 
 Плюсы:

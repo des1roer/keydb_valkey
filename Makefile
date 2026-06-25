@@ -22,41 +22,65 @@ kdb1:
 kdb2:
 	@$(DOCKER_COMP) exec keydb_node2 bash
 
-# ── VALKEY CLUSTER (6 nodes: 3 primary + 3 replica) ──
-val-node1:
-	@$(DOCKER_COMP) exec valkey_node1 bash
-val-node2:
-	@$(DOCKER_COMP) exec valkey_node2 bash
-val-node3:
-	@$(DOCKER_COMP) exec valkey_node3 bash
-val-node4:
-	@$(DOCKER_COMP) exec valkey_node4 bash
-val-node5:
-	@$(DOCKER_COMP) exec valkey_node5 bash
-val-node6:
-	@$(DOCKER_COMP) exec valkey_node6 bash
+# ── VALKEY MASTER-REPLICA + SENTINEL (docker-compose-valkey.yaml) ──
+VAL_COMP = docker compose -f docker-compose-valkey.yaml
 
-# Создать кластер (запустить после make up)
-val-cluster-create:
-	@bash bin/create-cluster.sh
+val-up:
+	@$(VAL_COMP) up -d
 
-# Информация о кластере
-val-cluster-info:
-	@echo "=== Cluster Info ==="
-	@docker exec valkey_node1 valkey-cli -a pass -c CLUSTER INFO 2>/dev/null | grep -v Warning
+val-down:
+	@$(VAL_COMP) down --remove-orphans
+
+val-ps:
+	@$(VAL_COMP) ps
+
+val-primary:
+	@$(VAL_COMP) exec valkey_primary bash
+
+val-replica:
+	@$(VAL_COMP) exec valkey_replica bash
+
+val-sentinel:
+	@$(VAL_COMP) exec valkey_sentinel bash
+
+# Информация о репликации (до failover)
+val-repl-info:
+	@echo "=== valkey_primary INFO replication ==="
+	@docker exec valkey_primary valkey-cli -a pass INFO replication 2>/dev/null | grep -E 'role|connected_slaves' || true
 	@echo ""
-	@echo "=== Cluster Nodes ==="
-	@docker exec valkey_node1 valkey-cli -a pass -c CLUSTER NODES 2>/dev/null | grep -v Warning
+	@echo "=== valkey_replica INFO replication ==="
+	@docker exec valkey_replica valkey-cli -a pass INFO replication 2>/dev/null | grep -E 'role|master_host|master_port' || true
+	@echo ""
+	@echo "=== Sentinel get-master-addr-by-name ==="
+	@docker exec valkey_sentinel valkey-cli -p 26379 SENTINEL get-master-addr-by-name valkey_cluster 2>/dev/null || true
 
-# Проверка кластера
-val-cluster-check:
-	@docker run --rm --network keydb_valkey_db_ha \
-		valkey/valkey:9 \
-		valkey-cli --cluster check valkey_node1:6379 -a pass
+# Тест failover: остановить primary, Sentinel должен повысить replica
+val-failover: val-repl-info
+	@echo ""
+	@echo "=== Останавливаем valkey_primary ==="
+	@docker stop valkey_primary
+	@echo "  valkey_primary остановлен"
+	@echo ""
+	@echo "  Ждём Sentinel (5s)..."
+	@sleep 5
+	@echo ""
+	@echo "=== Состояние ПОСЛЕ failover ==="
+	@echo ""
+	@echo "=== valkey_replica INFO replication ==="
+	@docker exec valkey_replica valkey-cli -a pass INFO replication 2>/dev/null | grep -E 'role|connected_slaves' || true
+	@echo ""
+	@echo "=== Sentinel get-master-addr-by-name ==="
+	@docker exec valkey_sentinel valkey-cli -p 26379 SENTINEL get-master-addr-by-name valkey_cluster 2>/dev/null || true
+	@echo ""
+	@echo "✅ Failover завершён. Проверьте что replica стала role:master"
 
-# Подключение к кластеру (cluster-мод)
-val-shell:
-	@docker exec -it valkey_node1 valkey-cli -a pass -c
+# Перезапустить primary как реплику после failover
+val-rejoin-primary:
+	@echo "=== Запускаем valkey_primary (как replica нового мастера) ==="
+	@$(VAL_COMP) up -d valkey_primary
+	@sleep 3
+	@echo "=== valkey_primary INFO replication ==="
+	@docker exec valkey_primary valkey-cli -a pass INFO replication 2>/dev/null | grep -E 'role|master_host|master_port' || true
 
 # ── PHP TEST ──
 php-test:
